@@ -86,23 +86,32 @@ public func requestResponseJSONWithOffline(_ url: URLConvertible,
                                            encoding: ParameterEncoding = URLEncoding.default,
                                            headers: HTTPHeaders? = nil,
                                            result: @escaping (_ statusCode: Int?, _ json: JSON, _ source: requestResponseJSONWithOfflineSource) -> Void) {
-  Alamofire.request(url, method: method, parameters: parameters, encoding: encoding, headers: headers).responseJSON {
+  AF.request(url, method: method, parameters: parameters, encoding: encoding, headers: headers).responseJSON {
     response in
     
     let manager = FileManager.default
     let url = manager.urls(for: .cachesDirectory, in: .userDomainMask).first
     let cacheUrl = url!.appendingPathComponent(cacheName)
-    let cachePath = cacheUrl.path
-    
+
     if response.value != nil {
       let statusCode = response.response?.statusCode
       let json = JSON(response.value!)
       if statusCode == HTTPStatusCode.ok.rawValue {
-        NSKeyedArchiver.archiveRootObject(response.value!, toFile: cachePath)
+        do {
+          let data = try NSKeyedArchiver.archivedData(withRootObject: response.value!, requiringSecureCoding: false)
+          try data.write(to: cacheUrl)
+        } catch {
+          print("Error while archive data")
+        }
       }
       result(statusCode, json, .online)
     } else {
-      if let response_value = NSKeyedUnarchiver.unarchiveObject(withFile: cachePath)  {
+      guard let codedData = try? Data(contentsOf: cacheUrl) else {
+        result(nil, JSON.null, .offline)
+        return
+      }
+
+      if let response_value = try! NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(codedData) {
         let statusCode = HTTPStatusCode.ok.rawValue
         let json = JSON(response_value)
         result(statusCode, json, .offline)
@@ -128,7 +137,7 @@ public func requestResponseFromOffline( cacheName: String, result: @escaping (_ 
     let manager = FileManager.default
     let url = manager.urls(for: .cachesDirectory, in: .userDomainMask).first
     let cacheUrl = url!.appendingPathComponent(cacheName)
-    let cachePath = cacheUrl.path
+
     var modificationDate: Date?
     do {
       try  modificationDate = cacheUrl.resourceValues(forKeys: [URLResourceKey.contentModificationDateKey]).contentModificationDate
@@ -136,7 +145,12 @@ public func requestResponseFromOffline( cacheName: String, result: @escaping (_ 
       modificationDate = nil
     }
     
-    if let response_value = NSKeyedUnarchiver.unarchiveObject(withFile: cachePath)  {
+    guard let codedData = try? Data(contentsOf: cacheUrl) else {
+      result(nil, JSON.null, .offline, modificationDate)
+      return
+    }
+
+    if let response_value = try! NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(codedData) {
       let status = HTTPStatusCode.ok.rawValue
       let json = JSON(response_value)
       result(status, json, .offline, modificationDate)
